@@ -12,8 +12,7 @@
 
 using namespace std;
 
-class connection_pool
-{
+class connection_pool {
 public:
 	MYSQL *GetConnection();				 //获取数据库连接
 	bool ReleaseConnection(MYSQL *conn); //释放连接
@@ -46,19 +45,16 @@ private:
 	string DatabaseName; //使用数据库名
 };
 
-class connectionRAII
-{
+class connectionRAII {
 public:
-	connectionRAII(MYSQL **con, connection_pool *connPool)
-	{
+	connectionRAII(MYSQL **con, connection_pool *connPool) {
 		MYSQL* SQL=NULL;
 		SQL = connPool->GetConnection();
 		*con=SQL;
 		conRAII = SQL;
 		poolRAII = connPool;
 	}
-	~connectionRAII()
-	{
+	~connectionRAII() {
 		printf("destory RAII");
 		poolRAII->ReleaseConnection(conRAII);
 	}

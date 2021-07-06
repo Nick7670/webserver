@@ -27,8 +27,7 @@ public:
     static const int FILENAME_LEN = 200;
     static const int READ_BUFFER_SIZE = 2048;
     static const int WRITE_BUFFER_SIZE = 1024;
-    enum METHOD
-    {
+    enum METHOD {
         GET = 0,//请求资源
         POST,//提交资源
         HEAD,//获取响应头
@@ -39,14 +38,12 @@ public:
         CONNECT,
         PATH
     };
-    enum CHECK_STATE
-    {
+    enum CHECK_STATE {
         CHECK_STATE_REQUESTLINE = 0,
         CHECK_STATE_HEADER,
         CHECK_STATE_CONTENT
     };
-    enum HTTP_CODE
-    {
+    enum HTTP_CODE {
         NO_REQUEST,
         GET_REQUEST,
         BAD_REQUEST,
@@ -56,8 +53,7 @@ public:
         INTERNAL_ERROR,
         CLOSED_CONNECTION
     };
-    enum LINE_STATUS
-    {
+    enum LINE_STATUS {
         LINE_OK = 0,
         LINE_BAD,
         LINE_OPEN
@@ -73,8 +69,7 @@ public:
     void process();
     bool read_once();
     bool write();
-    sockaddr_in *get_address()
-    {
+    sockaddr_in *get_address() {
         return &m_address;
     }
     void initmysql_result(connection_pool *connPool);

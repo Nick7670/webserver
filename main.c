@@ -71,8 +71,7 @@ void create_daemon()
 	return;
 }
 //信号处理函数
-void sig_handler(int sig)
-{
+void sig_handler(int sig) {
     //为保证函数的可重入性，保留原来的errno
     int save_errno = errno;
     int msg = sig;
@@ -80,14 +79,16 @@ void sig_handler(int sig)
     errno = save_errno;
 }
 
-//设置信号函数
-void addsig(int sig, void(handler)(int), bool restart = true)
-{
+/*
+sig:需要处理的信号
+handler:信号处理函数
+restart:是否重启系统调用
+*/
+void addsig(int sig, void(handler)(int), bool restart = true) {
     struct sigaction sa;
     memset(&sa, '\0', sizeof(sa));
     sa.sa_handler = handler;
-    if (restart)
-    {
+    if (restart) {
         sa.sa_flags |= SA_RESTART;//系统调用被信号打断时，重启系统调用（慢速系统调用）
     }
     sigfillset(&sa.sa_mask);//忽略所有信号
@@ -95,8 +96,7 @@ void addsig(int sig, void(handler)(int), bool restart = true)
 }
 
 //定时器回调函数，删除非活动连接在socket上的注册事件，并关闭
-void cb_func(client_data *user_data)
-{
+void cb_func(client_data *user_data) {
     epoll_ctl(epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
     assert(user_data);
     close(user_data->sockfd);
@@ -109,17 +109,15 @@ void show_error(int connfd, const char *info)
     close(connfd);
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     create_daemon();
-    if (argc <= 1)
-    {
+    if (argc <= 1) {
         printf("usage: %s ip_address port_number\n", basename(argv[0]));
         return 1;
     }
     int port = atoi(argv[1]);
 
-    addsig(SIGCHLD,SIG_IGN);
+    addsig(SIGCHLD, SIG_IGN);
     addsig(SIGPIPE, SIG_IGN);
 
     //创建数据库连接池
@@ -128,26 +126,25 @@ int main(int argc, char *argv[])
 
     //创建线程池
     threadpool<http_conn>* pool = NULL;
-    try
-    {
+    try {
         pool = new threadpool<http_conn>(connPool);
     }
-    catch (...)
-    {
+    catch (...) {
         return 1;
     }
 
     http_conn* users_http = new http_conn[MAX_FD];
     assert(users_http);
 
-    //初始化数据库读取表
+    //从数据库中取出用户名和密码，存到map中
     users_http->initmysql_result(connPool);
 
     int listenfd = socket(PF_INET, SOCK_STREAM, 0);
     assert(listenfd >= 0);
-    struct linger tmp={1,5};
+    struct linger tmp = {1, 5};
     //SO_LINGER若有数据待发送，延迟关闭  优雅关闭连接
-    setsockopt(listenfd,SOL_SOCKET,SO_LINGER,&tmp,sizeof(tmp));
+    setsockopt(listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
+
     struct sockaddr_in address;
     bzero(&address, sizeof(address));
     address.sin_family = AF_INET;
@@ -175,13 +172,13 @@ int main(int argc, char *argv[])
     assert(epollfd != -1);
     http_conn::m_epollfd = epollfd;
 
-    addfd(epollfd, listenfd, false,0);//注册epoll内核中的事件，同时在这里设置listenfd是LT
+    addfd(epollfd, listenfd, false, 0);//注册epoll内核中的事件，同时在这里设置listenfd是LT
 
     //创建管道
     ret = socketpair(PF_UNIX, SOCK_STREAM, 0, pipefd);
     assert(ret != -1);
     setnonblocking(pipefd[1]);
-    addfd(epollfd, pipefd[0], false,1);//注册epoll内核中的事件，同时在这里设置pipefd[0]是 ET/LT
+    addfd(epollfd, pipefd[0], false, 1);//注册epoll内核中的事件，同时在这里设置pipefd[0]是 ET/LT
 
     addsig(SIGALRM, sig_handler, false);
     addsig(SIGTERM, sig_handler, false);
@@ -191,53 +188,101 @@ int main(int argc, char *argv[])
 
     bool stop_server = false;
     bool timeout = false;
+    //最小超时单位
+    alarm(TIMESLOT);
 
-    alarm(TIMESLOT);//最小超时单位
-
-    while (!stop_server)
-    {
+    while (!stop_server) {
         int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
-        if (number < 0 && errno != EINTR)//errno:  4  Interrupted system call
-        {
+        //errno:  4  Interrupted system call
+        if (number < 0 && errno != EINTR) {
             break;
         }
-
-        for (int i = 0; i < number; i++)
-        {
+        for (int i = 0; i < number; i++) {
+            int new_fd = events[i].data.fd;
             //处理新到的客户连接   LT模式
-            if (events[i].data.fd == listenfd)
-            {
+            if (new_fd == listenfd) {
                 sockaddr_in client_address;
                 socklen_t client_addrlen = sizeof(client_address);
-
                 int connfd = accept(listenfd, (struct sockaddr *)&client_address, &client_addrlen);
-                if (connfd < 0)
-                {
+
+                if (connfd < 0) {
                     continue;
                 }
-                if (http_conn::m_user_count >= MAX_FD)
-                {
+                if (http_conn::m_user_count >= MAX_FD) {
                     show_error(connfd, "Internal server busy");
                     continue;
                 }
-                users_http[connfd].init(connfd, client_address);
                 //初始化套接字地址,注册epollonshot et,初始化http_conn对象中的成员变量
-
-                //初始化client_data数据
-                //创建定时器，设置回调函数和超时时间，绑定用户数据，将定时器添加到链表中
-                users_timer[connfd].address = client_address;//client_data
-                users_timer[connfd].sockfd = connfd;
-
-                util_timer *timer = new util_timer;
-                timer->user_data = &users_timer[connfd];
-                timer->cb_func = cb_func;//定时器回调函数，删除非活动连接在socket上的注册事件，并关闭
+                users_http[connfd].init(connfd, client_address);
                 
-                timer->expire = time(NULL) + 3 * TIMESLOT;//到期时间
-                users_timer[connfd].timer = timer;
+                //设置定时器相关配置
+                util_timer *timer = new util_timer();
+                timer->user_data = &users_timer[connfd];
+                timer->cb_func = cb_func;
+                timer->expire = time(NULL) + 3 * TIMESLOT;
                 timer_lst.add_timer(timer);
 
+                //设置相关配置
+                users_timer[connfd].address = client_address;
+                users_timer[connfd].sockfd = connfd;
+                users_timer[connfd].timer = timer;
                 continue;
-            }
+
+            } else if ((new_fd == pipefd[0]) && (events[i].events & EPOLLIN)) {
+                //处理信号
+                char signals[1024];
+                ret = recv(pipefd[0], signals, sizeof(signals), 0);
+                //另一端已关闭则返回0。失败返回-1，
+                if (ret == -1||ret == 0) {
+                    continue;
+                } else {
+                    for (int i = 0; i < ret; ++i) {
+                        switch (signals[i]) {
+                            case SIGALRM:
+                                timeout = true;
+                                break;
+                            case SIGTERM:
+                                stop_server = true;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                }
+
+            } else if (events[i].events & EPOLLIN) {
+                util_timer* timer = users_timer[new_fd].timer;
+                //在此处读取所有数据
+                if (users_http[new_fd].read_once()) {
+                    //将该事件放入请求队列
+                    pool->append(users_http + new_fd);
+                    //若有数据传输，则将定时器往后延迟3个单位，并对新的定时器在链表上的位置进行调整
+                    if (timer) {
+                        timer->expire = time(NULL) + 3 * TIMESLOT;
+                        timer_lst.adjust_timer(timer);
+                    }
+                } else {
+                    timer->cb_func(&users_timer[new_fd]);
+                    if (timer) {
+                        timer_lst.del_timer(timer);
+                    }
+                }
+
+            } else if (events[i].events & EPOLLOUT) {
+                util_timer *timer = users_timer[new_fd].timer;
+                if (users_http[new_fd].write()) {
+                    if (timer) {
+                        timer->expire = time(NULL) + 3 * TIMESLOT;
+                        timer_lst.adjust_timer(timer);
+                    }
+                } else {
+                    timer->cb_func(&users_timer[new_fd]);
+                    if (timer) {
+                        timer_lst.del_timer(timer);
+                    }
+                }
+
+            } else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
                 /*events可以是以下几个宏的集合：
                 EPOLLIN ：表示对应的文件描述符可以读（包括对端SOCKET正常关闭）；
                 EPOLLOUT：表示对应的文件描述符可以写；
@@ -247,105 +292,19 @@ int main(int argc, char *argv[])
                 EPOLLET： 将EPOLL设为边缘触发(Edge Triggered)模式，这是相对于水平触发(Level Triggered)来说的。
                 EPOLLONESHOT：只监听一次事件，当监听完这次事件之后，如果还需要继续监听这个socket的话，需要再次把这个socket加入到EPOLL队列里
                 */
-                        //处理客户连接上接收到的数据
-
-            else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))//错误
-            {
-                //服务器端关闭连接，移除对应的定时器
-                util_timer *timer = users_timer[events[i].data.fd].timer;//指向定时器链表中的一个节点
-                timer->cb_func(&users_timer[events[i].data.fd]);//从epoll内核删除
-
-                if (timer)
-                {
-                    timer_lst.del_timer(timer);//从定时器链表中删除
+                util_timer *timer = users_timer[new_fd].timer;
+                //从epoll内核删除，从定时器链表中删除
+                timer->cb_func(&users_timer[new_fd]);
+                if (timer) {
+                    timer_lst.del_timer(timer);
                 }
-            }
 
-            //处理信号
-            else if ((events[i].data.fd == pipefd[0]) && (events[i].events & EPOLLIN))
-            {
-                char signals[1024];
-                ret = recv(pipefd[0], signals, sizeof(signals), 0);
-                if (ret == -1||ret == 0)//另一端已关闭则返回0。失败返回-1，
-                {
-                    continue;
-                }
-                else
-                {
-                    for (int i = 0; i < ret; ++i)
-                    {
-                        switch (signals[i])
-                        {
-                        case SIGALRM:
-                        {
-                            timeout = true;
-                            break;
-                        }
-                        case SIGTERM:
-                        {
-                            stop_server = true;
-                        }
-                        }
-                    }
-                }
-            }
-            else if (events[i].events & EPOLLIN)
-            {
-                util_timer* timer = users_timer[events[i].data.fd].timer;
-
-                if (users_http[events[i].data.fd].read_once())//在此处读取所有数据
-                {
-                    //若监测到读事件，将该事件放入请求队列
-                    pool->append(users_http + events[i].data.fd);
-
-                    //若有数据传输，则将定时器往后延迟3个单位
-                    //并对新的定时器在链表上的位置进行调整
-                    if (timer)
-                    {
-                        timer->expire = time(NULL) + 3 * TIMESLOT;
-                        timer_lst.adjust_timer(timer);
-                    }
-                }
-                else//错误
-                {
-                    timer->cb_func(&users_timer[events[i].data.fd]);
-                    if (timer)
-                    {
-                        timer_lst.del_timer(timer);
-                    }
-                }
-            }
-
-
-            else if (events[i].events & EPOLLOUT)
-            {
-                util_timer *timer = users_timer[events[i].data.fd].timer;
-                if (users_http[events[i].data.fd].write())
-                {
-                    //若有数据传输，则将定时器往后延迟3个单位
-                    //并对新的定时器在链表上的位置进行调整
-                    if (timer)
-                    {
-                        timer->expire = time(NULL) + 3 * TIMESLOT;
-                        timer_lst.adjust_timer(timer);
-                    }
-                }
-                else
-                {
-                    timer->cb_func(&users_timer[events[i].data.fd]);
-                    if (timer)
-                    {
-                        timer_lst.del_timer(timer);
-                    }
-                }
-            }
+            } 
         }
-        if (timeout)
-        {
+        if (timeout) {
             timer_lst.tick();//遍历时间链表，将所有超时事件都删除
             alarm(TIMESLOT);//重新定时
             //超时的后果就是将这个连接的所有信息与资源释放掉
-
             timeout = false;
         }
     }
